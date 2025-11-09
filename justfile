@@ -1,5 +1,2 @@
-build:
-  nim c -d:release lox/lox.nim
-
-run:
+default:
   nim r lox/lox.nim
