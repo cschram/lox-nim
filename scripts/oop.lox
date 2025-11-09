@@ -1,0 +1,19 @@
+class Greeter {
+    init(greeting) {
+        this.greeting = greeting;
+    }
+
+    greet(name) {
+        print this.greeting + ", " + name;
+    }
+}
+
+class HelloGreeter < Greeter {
+    init() {
+        super.init("Hello");
+    }
+}
+
+var greeter = HelloGreeter();
+var args = get_args();
+greeter.greet(args.get(2));

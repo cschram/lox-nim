@@ -12,16 +12,6 @@ type
     of lkTrue, lkFalse:
       discard
 
-proc newLiteral*(kind: LiteralKind; value: auto): Literal =
-  result = Literal(kind: kind)
-  case kind
-  of lkNumber:
-    result.numberValue = value
-  of lkString:
-    result.stringValue = value
-  of lkTrue, lkFalse:
-    discard
-
 proc `$`*(l: Literal): string {.inline.} =
   case l.kind
   of lkNumber:
@@ -59,12 +49,10 @@ type
     literal*: Option[Literal]
     location*: TokenLocation
 
-proc `$`*(tk: TokenKind): string {.inline.} =
-  result = $tk
-  result.removePrefix("tk")
-
 proc `$`*(t: Token): string {.inline.} =
-  result = fmt"{t.kind}({$t.lexeme}, {$t.literal})"
+  var kind = $t.kind
+  kind.removePrefix("tk")
+  result = fmt"{kind}({$t.lexeme}, {$t.literal})"
 
 type
   SyntaxError* = ref object
@@ -81,6 +69,9 @@ type
     current*: int
     line*: int
     column*: int
+
+proc `$`*(se: SyntaxError): string {.inline.} =
+  result = fmt"[Line {se.location.line}, Column {se.location.column}] Error: {se.message}"
 
 proc isAtEnd(state: ScanState): bool =
   ## Checks if the scanner has reached the end of the source code.
@@ -102,6 +93,9 @@ proc advance(state: ScanState): char =
   result = state.source[state.current]
   state.current += 1
   state.column += 1
+  if result == '\n':
+    state.line += 1
+    state.column = 1
 
 proc peek(state: ScanState): char =
   ## Peeks at the current character without advancing the scanner.
@@ -166,9 +160,9 @@ proc scanIdentifier(state: ScanState) =
       else: tkIdentifier
     literal = case kind
       of tkTrue:
-        some(newLiteral(lkTrue, true))
+        some(Literal(kind: lkTrue))
       of tkFalse:
-        some(newLiteral(lkFalse, false))
+        some(Literal(kind: lkFalse))
       else:
         none(Literal)
   state.addToken(kind, literal)
@@ -177,22 +171,83 @@ proc scanNumber(state: ScanState) =
   ## Scans a number literal from the source code.
   while not state.isAtEnd() and state.isDigit():
     discard state.advance()
-  if not state.isAtEnd() and state.peek() == '.':
-    let next = state.peekNext()
-    if next.isSome and next.get().isDigit():
-      discard state.advance() # Consume the '.'
-      while not state.isAtEnd() and state.peek().isDigit():
-        discard state.advance()
-  let numberStr = state.getLexeme()
-  let numberValue = parseFloat(numberStr)
-  state.addToken(tkNumber, some(newLiteral(lkNumber, numberValue)))
+
+proc scanString(state: ScanState) =
+  while state.peek() != '"' and not state.isAtEnd():
+    discard state.advance()
+  if state.isAtEnd():
+    state.addSyntaxError("Unterminated string.")
+  else:
+    discard state.advance() # Consume the closing "
+    let lexeme = state.getLexeme()
+    state.addToken(tkString, some(Literal(kind: lkString,
+                        stringValue: lexeme[1 ..< lexeme.len - 1])))
+
+proc scanComment(state: ScanState) =
+  ## Scans a comment from the source code.
+  while not state.isAtEnd() and state.peek() != '\n':
+    discard state.advance()
 
 proc scanToken(state: ScanState) =
   ## Scans a single token from the source code and adds it to the state's token
   ## list.
-  discard
+  case state.advance()
+  of ' ', '\r', '\t':
+    # Ignore whitespace
+    discard
+  of '\n':
+    state.line += 1
+    state.column = 1
+  of '(': state.addToken(tkLeftParen)
+  of ')': state.addToken(tkRightParen)
+  of '{': state.addToken(tkLeftBrace)
+  of '}': state.addToken(tkRightBrace)
+  of ',': state.addToken(tkComma)
+  of '.': state.addToken(tkDot)
+  of '-': state.addToken(tkMinus)
+  of '+': state.addToken(tkPlus)
+  of ';': state.addToken(tkSemicolon)
+  of '*': state.addToken(tkStar)
+  of '!':
+    if state.peek() == '=':
+      discard state.advance()
+      state.addToken(tkBangEqual)
+    else:
+      state.addToken(tkBang)
+  of '=':
+    if state.peek() == '=':
+      discard state.advance()
+      state.addToken(tkEqualEqual)
+    else:
+      state.addToken(tkEqual)
+  of '<':
+    if state.peek() == '=':
+      discard state.advance()
+      state.addToken(tkLessEqual)
+    else:
+      state.addToken(tkLess)
+  of '>':
+    if state.peek() == '=':
+      discard state.advance()
+      state.addToken(tkGreaterEqual)
+    else:
+      state.addToken(tkGreater)
+  of '/':
+    if state.peek() == '/':
+      state.scanComment()
+    else:
+      state.addToken(tkSlash)
+  of '"':
+    state.scanString()
+  of '0'..'9':
+    state.scanNumber()
+  else:
+    if state.peekLast().isAlphaAscii():
+      state.scanIdentifier()
+    else:
+      state.addSyntaxError(fmt"Unexpected character: '{state.peekLast()}'.")
 
-proc scan(source: string): ScanResult =
+proc scan*(source: string): ScanResult =
   ## Scans the given source code and returns the list of tokens and any syntax
   ## errors encountered.
   var state = ScanState(
